@@ -2,16 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/strtod.h"
+
 #include <stdarg.h>
 #include <cmath>
-
-#include "src/v8.h"
 
 #include "src/bignum.h"
 #include "src/cached-powers.h"
 #include "src/double.h"
 #include "src/globals.h"
-#include "src/strtod.h"
 #include "src/utils.h"
 
 namespace v8 {
@@ -155,8 +154,7 @@ static void ReadDiyFp(Vector<const char> buffer,
 static bool DoubleStrtod(Vector<const char> trimmed,
                          int exponent,
                          double* result) {
-#if (V8_TARGET_ARCH_IA32 || V8_TARGET_ARCH_X87 || defined(USE_SIMULATOR)) && \
-    !defined(_MSC_VER)
+#if (V8_TARGET_ARCH_IA32 || defined(USE_SIMULATOR)) && !defined(_MSC_VER)
   // On x86 the floating-point stack can be 64 or 80 bits wide. If it is
   // 80 bits wide (as is the case on Linux) then double-rounding occurs and the
   // result is not accurate.
@@ -224,7 +222,6 @@ static DiyFp AdjustmentPowerOfTen(int exponent) {
     case 7: return DiyFp(V8_2PART_UINT64_C(0x98968000, 00000000), -40);
     default:
       UNREACHABLE();
-      return DiyFp(0, 0);
   }
 }
 
@@ -419,4 +416,5 @@ double Strtod(Vector<const char> buffer, int exponent) {
   return BignumStrtod(trimmed, exponent, guess);
 }
 
-} }  // namespace v8::internal
+}  // namespace internal
+}  // namespace v8

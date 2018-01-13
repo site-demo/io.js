@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/layout-descriptor.h"
+
 #include <sstream>
 
-#include "src/v8.h"
-
 #include "src/base/bits.h"
-#include "src/layout-descriptor.h"
+#include "src/handles-inl.h"
+#include "src/objects-inl.h"
 
 using v8::base::bits::CountTrailingZeros32;
 
@@ -19,55 +20,22 @@ Handle<LayoutDescriptor> LayoutDescriptor::New(
   Isolate* isolate = descriptors->GetIsolate();
   if (!FLAG_unbox_double_fields) return handle(FastPointerLayout(), isolate);
 
-  int inobject_properties = map->inobject_properties();
-  if (inobject_properties == 0) return handle(FastPointerLayout(), isolate);
+  int layout_descriptor_length =
+      CalculateCapacity(*map, *descriptors, num_descriptors);
 
-  DCHECK(num_descriptors <= descriptors->number_of_descriptors());
-
-  int layout_descriptor_length;
-  const int kMaxWordsPerField = kDoubleSize / kPointerSize;
-
-  if (num_descriptors <= kSmiValueSize / kMaxWordsPerField) {
-    // Even in the "worst" case (all fields are doubles) it would fit into
-    // a Smi, so no need to calculate length.
-    layout_descriptor_length = kSmiValueSize;
-
-  } else {
-    layout_descriptor_length = 0;
-
-    for (int i = 0; i < num_descriptors; i++) {
-      PropertyDetails details = descriptors->GetDetails(i);
-      if (!InobjectUnboxedField(inobject_properties, details)) continue;
-      int field_index = details.field_index();
-      int field_width_in_words = details.field_width_in_words();
-      layout_descriptor_length =
-          Max(layout_descriptor_length, field_index + field_width_in_words);
-    }
-
-    if (layout_descriptor_length == 0) {
-      // No double fields were found, use fast pointer layout.
-      return handle(FastPointerLayout(), isolate);
-    }
+  if (layout_descriptor_length == 0) {
+    // No double fields were found, use fast pointer layout.
+    return handle(FastPointerLayout(), isolate);
   }
-  layout_descriptor_length = Min(layout_descriptor_length, inobject_properties);
 
   // Initially, layout descriptor corresponds to an object with all fields
   // tagged.
   Handle<LayoutDescriptor> layout_descriptor_handle =
       LayoutDescriptor::New(isolate, layout_descriptor_length);
 
-  DisallowHeapAllocation no_allocation;
-  LayoutDescriptor* layout_descriptor = *layout_descriptor_handle;
+  LayoutDescriptor* layout_descriptor = Initialize(
+      *layout_descriptor_handle, *map, *descriptors, num_descriptors);
 
-  for (int i = 0; i < num_descriptors; i++) {
-    PropertyDetails details = descriptors->GetDetails(i);
-    if (!InobjectUnboxedField(inobject_properties, details)) continue;
-    int field_index = details.field_index();
-    layout_descriptor = layout_descriptor->SetRawData(field_index);
-    if (details.field_width_in_words() > 1) {
-      layout_descriptor = layout_descriptor->SetRawData(field_index + 1);
-    }
-  }
   return handle(layout_descriptor, isolate);
 }
 
@@ -79,7 +47,7 @@ Handle<LayoutDescriptor> LayoutDescriptor::ShareAppend(
   Handle<LayoutDescriptor> layout_descriptor(map->GetLayoutDescriptor(),
                                              isolate);
 
-  if (!InobjectUnboxedField(map->inobject_properties(), details)) {
+  if (!InobjectUnboxedField(map->GetInObjectProperties(), details)) {
     DCHECK(details.location() != kField ||
            layout_descriptor->IsTagged(details.field_index()));
     return layout_descriptor;
@@ -106,7 +74,7 @@ Handle<LayoutDescriptor> LayoutDescriptor::AppendIfFastOrUseFull(
   if (layout_descriptor->IsSlowLayout()) {
     return full_layout_descriptor;
   }
-  if (!InobjectUnboxedField(map->inobject_properties(), details)) {
+  if (!InobjectUnboxedField(map->GetInObjectProperties(), details)) {
     DCHECK(details.location() != kField ||
            layout_descriptor->IsTagged(details.field_index()));
     return handle(layout_descriptor, map->GetIsolate());
@@ -139,14 +107,14 @@ Handle<LayoutDescriptor> LayoutDescriptor::EnsureCapacity(
   DCHECK(new_layout_descriptor->IsSlowLayout());
 
   if (layout_descriptor->IsSlowLayout()) {
-    memcpy(new_layout_descriptor->DataPtr(), layout_descriptor->DataPtr(),
+    memcpy(new_layout_descriptor->GetDataStartAddress(),
+           layout_descriptor->GetDataStartAddress(),
            layout_descriptor->DataSize());
     return new_layout_descriptor;
   } else {
     // Fast layout.
-    uint32_t value =
-        static_cast<uint32_t>(Smi::cast(*layout_descriptor)->value());
-    new_layout_descriptor->set(0, value);
+    uint32_t value = static_cast<uint32_t>(Smi::ToInt(*layout_descriptor));
+    new_layout_descriptor->set_layout_word(0, value);
     return new_layout_descriptor;
   }
 }
@@ -170,30 +138,29 @@ bool LayoutDescriptor::IsTagged(int field_index, int max_sequence_length,
   }
   uint32_t layout_mask = static_cast<uint32_t>(1) << layout_bit_index;
 
-  uint32_t value = IsSlowLayout()
-                       ? get_scalar(layout_word_index)
-                       : static_cast<uint32_t>(Smi::cast(this)->value());
+  uint32_t value = IsSlowLayout() ? get_layout_word(layout_word_index)
+                                  : static_cast<uint32_t>(Smi::ToInt(this));
 
   bool is_tagged = (value & layout_mask) == 0;
   if (!is_tagged) value = ~value;  // Count set bits instead of cleared bits.
   value = value & ~(layout_mask - 1);  // Clear bits we are not interested in.
   int sequence_length = CountTrailingZeros32(value) - layout_bit_index;
 
-  if (layout_bit_index + sequence_length == kNumberOfBits) {
+  if (layout_bit_index + sequence_length == kBitsPerLayoutWord) {
     // This is a contiguous sequence till the end of current word, proceed
     // counting in the subsequent words.
     if (IsSlowLayout()) {
-      int len = length();
       ++layout_word_index;
-      for (; layout_word_index < len; layout_word_index++) {
-        value = get_scalar(layout_word_index);
+      int num_words = number_of_layout_words();
+      for (; layout_word_index < num_words; layout_word_index++) {
+        value = get_layout_word(layout_word_index);
         bool cur_is_tagged = (value & 1) == 0;
         if (cur_is_tagged != is_tagged) break;
         if (!is_tagged) value = ~value;  // Count set bits instead.
         int cur_sequence_length = CountTrailingZeros32(value);
         sequence_length += cur_sequence_length;
         if (sequence_length >= max_sequence_length) break;
-        if (cur_sequence_length != kNumberOfBits) break;
+        if (cur_sequence_length != kBitsPerLayoutWord) break;
       }
     }
     if (is_tagged && (field_index + sequence_length == capacity())) {
@@ -258,13 +225,45 @@ bool LayoutDescriptorHelper::IsTagged(
 }
 
 
-bool LayoutDescriptor::IsConsistentWithMap(Map* map) {
+LayoutDescriptor* LayoutDescriptor::Trim(Heap* heap, Map* map,
+                                         DescriptorArray* descriptors,
+                                         int num_descriptors) {
+  DisallowHeapAllocation no_allocation;
+  // Fast mode descriptors are never shared and therefore always fully
+  // correspond to their map.
+  if (!IsSlowLayout()) return this;
+
+  int layout_descriptor_length =
+      CalculateCapacity(map, descriptors, num_descriptors);
+  // It must not become fast-mode descriptor here, because otherwise it has to
+  // be fast pointer layout descriptor already but it's is slow mode now.
+  DCHECK_LT(kSmiValueSize, layout_descriptor_length);
+
+  // Trim, clean and reinitialize this slow-mode layout descriptor.
+  int new_backing_store_length =
+      GetSlowModeBackingStoreLength(layout_descriptor_length);
+  int backing_store_length = length();
+  if (new_backing_store_length != backing_store_length) {
+    DCHECK_LT(new_backing_store_length, backing_store_length);
+    int delta = backing_store_length - new_backing_store_length;
+    heap->RightTrimFixedArray(this, delta);
+  }
+  memset(GetDataStartAddress(), 0, DataSize());
+  LayoutDescriptor* layout_descriptor =
+      Initialize(this, map, descriptors, num_descriptors);
+  DCHECK_EQ(this, layout_descriptor);
+  return layout_descriptor;
+}
+
+
+bool LayoutDescriptor::IsConsistentWithMap(Map* map, bool check_tail) {
   if (FLAG_unbox_double_fields) {
     DescriptorArray* descriptors = map->instance_descriptors();
     int nof_descriptors = map->NumberOfOwnDescriptors();
+    int last_field_index = 0;
     for (int i = 0; i < nof_descriptors; i++) {
       PropertyDetails details = descriptors->GetDetails(i);
-      if (details.type() != DATA) continue;
+      if (details.location() != kField) continue;
       FieldIndex field_index = FieldIndex::ForDescriptor(map, i);
       bool tagged_expected =
           !field_index.is_inobject() || !details.representation().IsDouble();
@@ -273,9 +272,18 @@ bool LayoutDescriptor::IsConsistentWithMap(Map* map) {
         DCHECK_EQ(tagged_expected, tagged_actual);
         if (tagged_actual != tagged_expected) return false;
       }
+      last_field_index =
+          Max(last_field_index,
+              details.field_index() + details.field_width_in_words());
+    }
+    if (check_tail) {
+      int n = capacity();
+      for (int i = last_field_index; i < n; i++) {
+        DCHECK(IsTagged(i));
+      }
     }
   }
   return true;
 }
-}
-}  // namespace v8::internal
+}  // namespace internal
+}  // namespace v8

@@ -33,7 +33,6 @@
 #include "src/base/platform/platform.h"
 #include "src/factory.h"
 #include "src/macro-assembler.h"
-#include "src/serialize.h"
 
 using namespace v8::internal;
 
@@ -57,7 +56,8 @@ TEST(LoadAndStoreWithRepresentation) {
   CHECK(buffer);
   Isolate* isolate = CcTest::i_isolate();
   HandleScope handles(isolate);
-  MacroAssembler assembler(isolate, buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(isolate, buffer, static_cast<int>(actual_size),
+                           v8::internal::CodeObjectRequired::kYes);
   MacroAssembler* masm = &assembler;  // Create a pointer for the __ macro.
   __ push(ebx);
   __ push(edx);
@@ -152,7 +152,7 @@ TEST(LoadAndStoreWithRepresentation) {
   __ ret(0);
 
   CodeDesc desc;
-  masm->GetCode(&desc);
+  masm->GetCode(isolate, &desc);
   // Call the function from C++.
   int result = FUNCTION_CAST<F0>(buffer)();
   CHECK_EQ(0, result);

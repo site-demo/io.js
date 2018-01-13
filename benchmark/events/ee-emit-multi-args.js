@@ -1,13 +1,13 @@
-var common = require('../common.js');
-var EventEmitter = require('events').EventEmitter;
+'use strict';
+const common = require('../common.js');
+const EventEmitter = require('events').EventEmitter;
 
-var bench = common.createBenchmark(main, {n: [2e6]});
+const bench = common.createBenchmark(main, { n: [2e6] });
 
 function main(conf) {
-  var n = conf.n | 0;
+  const n = conf.n | 0;
 
-  var ee = new EventEmitter();
-  var listeners = [];
+  const ee = new EventEmitter();
 
   for (var k = 0; k < 10; k += 1)
     ee.on('dummy', function() {});

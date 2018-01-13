@@ -6,26 +6,25 @@
 #define V8_FIELD_INDEX_INL_H_
 
 #include "src/field-index.h"
+#include "src/objects/descriptor-array.h"
 
 namespace v8 {
 namespace internal {
 
-
-inline FieldIndex FieldIndex::ForInObjectOffset(int offset, Map* map) {
+inline FieldIndex FieldIndex::ForInObjectOffset(int offset, const Map* map) {
   DCHECK((offset % kPointerSize) == 0);
   int index = offset / kPointerSize;
   DCHECK(map == NULL ||
          index < (map->GetInObjectPropertyOffset(0) / kPointerSize +
-                  map->inobject_properties()));
+                  map->GetInObjectProperties()));
   return FieldIndex(true, index, false, 0, 0, true);
 }
 
-
-inline FieldIndex FieldIndex::ForPropertyIndex(Map* map,
+inline FieldIndex FieldIndex::ForPropertyIndex(const Map* map,
                                                int property_index,
                                                bool is_double) {
   DCHECK(map->instance_type() >= FIRST_NONSTRING_TYPE);
-  int inobject_properties = map->inobject_properties();
+  int inobject_properties = map->GetInObjectProperties();
   bool is_inobject = property_index < inobject_properties;
   int first_inobject_offset;
   if (is_inobject) {
@@ -39,12 +38,12 @@ inline FieldIndex FieldIndex::ForPropertyIndex(Map* map,
                     is_double, inobject_properties, first_inobject_offset);
 }
 
-
-// Takes an index as computed by GetLoadFieldByIndex and reconstructs a
+// Takes an index as computed by GetLoadByFieldIndex and reconstructs a
 // FieldIndex object from it.
-inline FieldIndex FieldIndex::ForLoadByFieldIndex(Map* map, int orig_index) {
+inline FieldIndex FieldIndex::ForLoadByFieldIndex(const Map* map,
+                                                  int orig_index) {
   int field_index = orig_index;
-  int is_inobject = true;
+  bool is_inobject = true;
   bool is_double = field_index & 1;
   int first_inobject_offset = 0;
   field_index >>= 1;
@@ -58,7 +57,7 @@ inline FieldIndex FieldIndex::ForLoadByFieldIndex(Map* map, int orig_index) {
     field_index += JSObject::kHeaderSize / kPointerSize;
   }
   FieldIndex result(is_inobject, field_index, is_double,
-                    map->inobject_properties(), first_inobject_offset);
+                    map->GetInObjectProperties(), first_inobject_offset);
   DCHECK(result.GetLoadByFieldIndex() == orig_index);
   return result;
 }
@@ -85,40 +84,20 @@ inline int FieldIndex::GetLoadByFieldIndex() const {
   return is_double() ? (result | 1) : result;
 }
 
-
-inline FieldIndex FieldIndex::ForDescriptor(Map* map, int descriptor_index) {
+inline FieldIndex FieldIndex::ForDescriptor(const Map* map,
+                                            int descriptor_index) {
   PropertyDetails details =
       map->instance_descriptors()->GetDetails(descriptor_index);
-  int field_index =
-      map->instance_descriptors()->GetFieldIndex(descriptor_index);
+  int field_index = details.field_index();
   return ForPropertyIndex(map, field_index,
                           details.representation().IsDouble());
 }
-
-
-inline FieldIndex FieldIndex::ForKeyedLookupCacheIndex(Map* map, int index) {
-  if (FLAG_compiled_keyed_generic_loads) {
-    return ForLoadByFieldIndex(map, index);
-  } else {
-    return ForPropertyIndex(map, index);
-  }
-}
-
 
 inline FieldIndex FieldIndex::FromFieldAccessStubKey(int key) {
   return FieldIndex(key);
 }
 
-
-inline int FieldIndex::GetKeyedLookupCacheIndex() const {
-  if (FLAG_compiled_keyed_generic_loads) {
-    return GetLoadByFieldIndex();
-  } else {
-    return property_index();
-  }
-}
-
-
-} }  // namespace v8::internal
+}  // namespace internal
+}  // namespace v8
 
 #endif

@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/v8.h"
-
+#include "src/objects-inl.h"
 #include "test/cctest/compiler/function-tester.h"
 
-using namespace v8::internal;
-using namespace v8::internal::compiler;
+namespace v8 {
+namespace internal {
+namespace compiler {
 
 TEST(BinopAdd) {
   FunctionTester T("(function(a,b) { return a + b; })");
@@ -387,6 +387,7 @@ TEST(PropertyKeyedDelete) {
 
 
 TEST(GlobalLoad) {
+  FLAG_stress_fullcodegen = false;
   FunctionTester T("(function() { return g; })");
 
   T.CheckThrows(T.undefined(), T.undefined());
@@ -395,17 +396,8 @@ TEST(GlobalLoad) {
 }
 
 
-TEST(GlobalStoreSloppy) {
-  FunctionTester T("(function(a,b) { g = a + b; return g; })");
-
-  T.CheckCall(T.Val(33), T.Val(22), T.Val(11));
-  CompileRun("delete g");
-  CompileRun("const g = 23");
-  T.CheckCall(T.Val(23), T.Val(55), T.Val(44));
-}
-
-
 TEST(GlobalStoreStrict) {
+  FLAG_stress_fullcodegen = false;
   FunctionTester T("(function(a,b) { 'use strict'; g = a + b; return g; })");
 
   T.CheckThrows(T.Val(22), T.Val(11));
@@ -451,7 +443,6 @@ TEST(LookupStore) {
 
 
 TEST(BlockLoadStore) {
-  FLAG_harmony_scoping = true;
   FunctionTester T("(function(a) { 'use strict'; { let x = a+a; return x; }})");
 
   T.CheckCall(T.Val(46), T.Val(23));
@@ -460,7 +451,6 @@ TEST(BlockLoadStore) {
 
 
 TEST(BlockLoadStoreNested) {
-  FLAG_harmony_scoping = true;
   const char* src =
       "(function(a,b) {"
       "'use strict';"
@@ -525,9 +515,6 @@ TEST(RegExpLiteral) {
 
 
 TEST(ClassLiteral) {
-  FLAG_harmony_classes = true;
-  FLAG_harmony_sloppy = true;
-  FLAG_harmony_object_literals = true;
   const char* src =
       "(function(a,b) {"
       "  class C {"
@@ -543,3 +530,7 @@ TEST(ClassLiteral) {
   T.CheckCall(T.Val(65), T.Val(23), T.Val(42));
   T.CheckCall(T.Val("ab"), T.Val("a"), T.Val("b"));
 }
+
+}  // namespace compiler
+}  // namespace internal
+}  // namespace v8

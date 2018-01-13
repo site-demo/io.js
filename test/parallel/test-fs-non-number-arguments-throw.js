@@ -1,24 +1,47 @@
-var assert = require('assert'),
-    fs = require('fs'),
-    saneEmitter,
-    sanity = 'ire(\'assert\')';
+'use strict';
 
-saneEmitter = fs.createReadStream(__filename, { start: 17, end: 29 });
+const common = require('../common');
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const tempFile = path.join(common.tmpDir, 'fs-non-number-arguments-throw');
 
-assert.throws(function () {
-  fs.createReadStream(__filename, { start: "17", end: 29 });
-}, "start as string didn't throw an error for createReadStream");
+common.refreshTmpDir();
+fs.writeFileSync(tempFile, 'abc\ndef');
 
-assert.throws(function () {
-  fs.createReadStream(__filename, { start: 17, end: "29" });
-}, "end as string didn't throw an error");
+// a sanity check when using numbers instead of strings
+const sanity = 'def';
+const saneEmitter = fs.createReadStream(tempFile, { start: 4, end: 6 });
 
-assert.throws(function () {
-  fs.createWriteStream(__filename, { start: "17" });
-}, "start as string didn't throw an error for createWriteStream");
+common.expectsError(
+  () => {
+    fs.createReadStream(tempFile, { start: '4', end: 6 });
+  },
+  {
+    code: 'ERR_INVALID_ARG_TYPE',
+    type: TypeError
+  });
 
-saneEmitter.on('data', function (data) {
-  // a sanity check when using numbers instead of strings
-  assert.strictEqual(sanity, data.toString('utf8'), 'read ' +
-                     data.toString('utf8') + ' instead of ' + sanity);
-});
+common.expectsError(
+  () => {
+    fs.createReadStream(tempFile, { start: 4, end: '6' });
+  },
+  {
+    code: 'ERR_INVALID_ARG_TYPE',
+    type: TypeError
+  });
+
+common.expectsError(
+  () => {
+    fs.createWriteStream(tempFile, { start: '4' });
+  },
+  {
+    code: 'ERR_INVALID_ARG_TYPE',
+    type: TypeError
+  });
+
+saneEmitter.on('data', common.mustCall(function(data) {
+  assert.strictEqual(
+    sanity, data.toString('utf8'),
+    `read ${data.toString('utf8')} instead of ${sanity}`);
+}));
